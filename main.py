@@ -7,6 +7,7 @@ from selenium.webdriver.common.by import By
 import time
 import chess
 import stockfish
+import os
 
 # TODO:
 # scrape time and give to stockfish
@@ -14,11 +15,17 @@ import stockfish
 # add chat insults
 
 SF_THINK_TIME = 1000 # <-- TODO: Give sf real time from game.
+SF_PARAMS = {
+    "Threads": os.cpu_count(),
+    "Ponder": "true",
+    "Hash": 512, # hashtable (in mb)
+}
 
 
 # css selectors and scripts
 S = {
-    'bullet': 'div[data-id="1+0"]',
+    'wait_for_turn': open('waitforturn.js').read(),
+    'game': 'div[data-id="3+2"]',
     'ai': '.color-submits [title="Black"]',
     'moves': 'u8t',
     'move_dest': '.move-dest',
@@ -27,6 +34,8 @@ S = {
     'your_turn': '.rclock-bottom .rclock-turn__text',
     'find_square': 'for(n of document.querySelectorAll("%s"))' \
                    + '{ if(n.cgKey === "%s"){return n} }',
+    'get_board':
+        'return Array.from(document.querySelectorAll("l4x u8t")).map(x => x.textContent)',
 }
 
 # promotion selector index
@@ -38,17 +47,26 @@ P = {
     'r': 'rook',
 }
 
+# helper for executing async javascript, which can wait for elements etc.
+def exec_async(d, script, *args):
+    return d.execute_async_script(
+        'var callback = arguments[arguments.length - 1]; ' + script,
+        *args,
+    )
+
 
 def get_board(d):
+    start = time.time()
     # moves in form Nf6
     # POSSIBLE BUG: order may not be stable
-    moves = [e.text for e in d.find_elements_by_css_selector(S['moves'])]
+    moves = d.execute_script(S['get_board'])
 
     b = chess.Board()
 
     for move in moves:
         b.push_san(move)
 
+    print(f'get board: {time.time() - start:.3f}')
     return b
 
 
@@ -108,30 +126,31 @@ def make_move(d, uci_move):
 
 
 
-def find_bullet_game(d):
+def find_human_game(d):
     d.get('https://lichess.org')
-    bullet = d.find_element_by_css_selector(S['bullet'])
-    print('waiting for load...')
-    bullet.click()
-    time.sleep(3) # TODO: wait for load.
-    print('done')
+    play_btn = WebDriverWait(d, 5).until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, S['game']))
+    )
+    play_btn.click()
 
 
-def find_computer_game(d):
+def find_computer_game(d, level=8):
     d.get('https://lichess.org/setup/ai')
     wait = WebDriverWait(d, 10)
-    element = wait.until(
+    play_btn = wait.until(
         EC.element_to_be_clickable((By.CSS_SELECTOR, S['ai']))
     )
-    e = d.find_element_by_css_selector(S['ai'])
-    e.click()
+    d \
+        .find_element_by_css_selector(f'#sf_level_{level}') \
+        .find_element_by_xpath('..') \
+        .click()
+
+    play_btn.click()
 
 
 
 def wait_for_turn(d):
-    WebDriverWait(d, 1e7).until(
-        EC.text_to_be_present_in_element((By.CSS_SELECTOR, S['your_turn']), 'Your turn')
-    )
+    return exec_async(d, S['wait_for_turn'])
 
 
 def play_move(d, b, sf):
@@ -146,7 +165,11 @@ def play_game(d, sf):
     SIDE = chess.BLACK
 
     while True:
-        wait_for_turn(d)
+        res = wait_for_turn(d)
+        if res != 'turn':
+            print(f'game end: {res}')
+            break
+
         b = get_board(d)
         print(b)
 
@@ -154,12 +177,12 @@ def play_game(d, sf):
 
 
 def main(d, sf):
-    find_computer_game(d)
+    find_bullet_game(d)
     play_game(d, sf)
 
 
 d = webdriver.Chrome()
-sf = stockfish.Stockfish()
+sf = stockfish.Stockfish(parameters=SF_PARAMS)
 
 # main(d, sf)
 # print('[main] exited')
