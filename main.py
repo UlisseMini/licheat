@@ -177,8 +177,16 @@ def play_game(d, sf):
 
 
 def main(d, sf):
-    find_bullet_game(d)
-    play_game(d, sf)
+    find_human_game(d)
+    while True:
+        try:
+            play_game(d, sf)
+        except Exception as e:
+            print(e)
+            continue
+
+        break
+
 
 
 d = webdriver.Chrome()
